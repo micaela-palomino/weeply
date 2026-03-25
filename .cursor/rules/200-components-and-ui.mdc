@@ -1,0 +1,56 @@
+---
+description: Component and ShadCN UI rules
+globs:
+  - "components/**/*"
+  - "src/components/**/*"
+alwaysApply: true
+---
+
+# Components & ShadCN UI
+
+- All basic UI (buttons, inputs, cards, etc.) → ShadCN only.
+- Add via: npx shadcn@latest add [name] → place in /components/ui or /src/components/ui.
+- Composite/domain components → /components (outside /ui).
+- Reusable → /components; route-specific can be colocated.
+- Always use ShadCN variants/props correctly.
+- Never recreate primitives if ShadCN provides one.
+- Ensure accessibility and Tailwind consistency.
+
+## Component Declaration
+
+- **Always use arrow functions** for React components and hooks:
+// ✅ Correct
+
+export const MyComponent = ({ prop }: Props) => {
+
+return <div>...</div>;
+
+};
+
+// ❌ Incorrect
+
+export function MyComponent({ prop }: Props) {
+
+return <div>...</div>;
+
+}
+## Type Definitions
+
+- **All types must be defined in `src/types/`** directory, organized by domain
+- **Check existing types** before creating new ones - reuse when possible
+- **Never define types inline** in components - extract to type files
+- **Use `type` imports** for types: `import type { MyType } from '@/types/...'`
+
+## Icon Components
+
+- **All SVG icons must be extracted** to `src/components/icons/` as reusable components
+- **Never use inline SVG** in components
+- Icon components should accept `className` prop for styling
+- Example: `src/components/icons/LanguageIcon.tsx`
+
+## File Organization
+
+- Types: `src/types/{domain}.ts` (e.g., `project.ts`, `navbar.ts`)
+- Icons: `src/components/icons/{Name}Icon.tsx`
+- Components: `src/components/{domain}/{ComponentName}.tsx`
+
