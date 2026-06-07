@@ -1,167 +1,152 @@
 'use client';
 
 import * as React from 'react';
-import { addDays, format, startOfWeek } from 'date-fns';
-import { es } from 'date-fns/locale';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarTimeline } from '@/components/calendar/CalendarTimeline';
-import { WeeklyIndicators } from '@/components/calendar/WeeklyIndicators';
-import { EventDialog } from '@/components/calendar/EventDialog';
-import type { CreateScheduleEventInput, ScheduleEvent } from '@/types/schedule';
-import type { UpdateScheduleEventInput } from '@/types/schedule';
-import {
-  WEEK_STARTS_ON,
-} from '@/constants/schedule';
-import { MockEventStore } from '@/services/schedule/MockEventStore';
-import { ScheduleService } from '@/services/schedule/ScheduleService';
-import type { ServiceResult } from '@/services/schedule/ScheduleService';
-import { Button } from '@/components/ui/button';
+import { startOfWeek, addDays } from 'date-fns';
+import type { ScheduleEvent } from '@/types/schedule';
+import { WEEK_STARTS_ON } from '@/constants/schedule';
+import { Sidebar } from './Sidebar';
+import { CalendarTimeline } from './CalendarTimeline';
+import { EventModal, type SavePayload } from './EventModal';
 
 type DialogState =
   | { mode: 'create'; startAtMs: number }
   | { mode: 'edit'; event: ScheduleEvent };
 
-const getInitialWeekStartAtMs = () =>
-  startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON }).getTime();
+const getWeekStart = () => startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
+
+let _nextId = 1;
+const makeId = () => `ev-${_nextId++}`;
+
+const makeSampleEvents = (ws: Date): ScheduleEvent[] => {
+  const at = (dayOffset: number, hours: number, minutes = 0): number => {
+    const d = new Date(ws);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(hours, minutes, 0, 0);
+    return d.getTime();
+  };
+  return [
+    { id: makeId(), title: 'Deep work', category: 'work', startAtMs: at(0, 9), durationMinutes: 120 },
+    { id: makeId(), title: 'Análisis', category: 'university', startAtMs: at(1, 16), durationMinutes: 120 },
+    { id: makeId(), title: 'Gym', category: 'exercise', startAtMs: at(2, 18), durationMinutes: 60 },
+    { id: makeId(), title: 'Lectura', category: 'leisure', startAtMs: at(4, 20), durationMinutes: 60 },
+  ];
+};
+
+const getDefaultStartAtMs = (): number => {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  if (h >= 7 && h < 21) {
+    const snappedMin = Math.ceil(m / 30) * 30;
+    const d = new Date(now);
+    if (snappedMin === 60) {
+      d.setHours(h + 1, 0, 0, 0);
+    } else {
+      d.setMinutes(snappedMin, 0, 0);
+    }
+    return d.getTime();
+  }
+  const d = new Date(now);
+  d.setHours(9, 0, 0, 0);
+  return d.getTime();
+};
 
 export const WeekCalendar = () => {
-  const queryClient = useQueryClient();
+  const [weekStart, setWeekStart] = React.useState(getWeekStart);
+  const [events, setEvents] = React.useState<ScheduleEvent[]>(() => makeSampleEvents(getWeekStart()));
+  const [dialog, setDialog] = React.useState<DialogState | null>(null);
 
-  const [weekStartAtMs, setWeekStartAtMs] = React.useState(() => getInitialWeekStartAtMs());
-  const [dialogState, setDialogState] = React.useState<DialogState | null>(null);
-  const weekStartDate = React.useMemo(() => new Date(weekStartAtMs), [weekStartAtMs]);
+  const handleSave = (payloads: SavePayload[]) => {
+    if (!dialog) return;
+    if (dialog.mode === 'create') {
+      const newEvents = payloads.map(p => ({ ...p, id: makeId() }));
+      setEvents(prev => [...prev, ...newEvents]);
+    } else {
+      const payload = payloads[0];
+      if (payload) {
+        setEvents(prev =>
+          prev.map(e => e.id === dialog.event.id ? { ...e, ...payload } : e),
+        );
+      }
+    }
+    setDialog(null);
+  };
 
-  const store = React.useMemo(() => new MockEventStore(), []);
-  const service = React.useMemo(() => new ScheduleService(store), [store]);
-
-  const query = useQuery({
-    queryKey: ['week', weekStartAtMs],
-    queryFn: () => service.getWeekWithBalance(weekStartAtMs),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateScheduleEventInput) => {
-      const res: ServiceResult<ScheduleEvent> = await service.createEvent(input);
-      if (!res.ok) throw new Error(res.error);
-      return res.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['week', weekStartAtMs] });
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async ({ eventId, input }: { eventId: string; input: UpdateScheduleEventInput }) => {
-      const res = await service.updateEvent(eventId, input);
-      if (!res.ok) throw new Error(res.error);
-      return res.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['week', weekStartAtMs] });
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (eventId: string) => {
-      const res = await service.deleteEvent(eventId);
-      if (!res.ok) throw new Error(res.error);
-      return;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['week', weekStartAtMs] });
-    },
-  });
-
-  const rangeLabel = React.useMemo(() => {
-    const end = addDays(weekStartDate, 6);
-    return `${format(weekStartDate, 'd MMM', { locale: es })} - ${format(end, 'd MMM', { locale: es })}`;
-  }, [weekStartDate]);
-
-  const events = query.data?.events ?? [];
-  const balance = query.data?.balance;
+  const handleDelete = () => {
+    if (dialog?.mode !== 'edit') return;
+    const id = dialog.event.id;
+    setEvents(prev => prev.filter(e => e.id !== id));
+    setDialog(null);
+  };
 
   return (
-    <div className="mx-auto max-w-6xl p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Calendario semanal</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{rangeLabel}</p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setWeekStartAtMs((prev) => addDays(new Date(prev), -7).getTime())}
-          >
-            ← Semana
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setWeekStartAtMs(getInitialWeekStartAtMs())}
-          >
-            Hoy
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setWeekStartAtMs((prev) => addDays(new Date(prev), 7).getTime())}
-          >
-            Semana →
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-xl border border-border/50 bg-card p-3">
-        <CalendarTimeline
-          weekStartAtMs={weekStartAtMs}
-          events={events}
-          onSlotClick={(startAtMs) => setDialogState({ mode: 'create', startAtMs })}
-          onEventClick={(event) => setDialogState({ mode: 'edit', event })}
-        />
-      </div>
-
-      {balance && <WeeklyIndicators balance={balance} />}
-
-      <EventDialog
-        open={dialogState !== null}
-        mode={dialogState?.mode ?? 'create'}
-        startAtMs={dialogState?.mode === 'edit' ? dialogState.event.startAtMs : dialogState?.startAtMs ?? weekStartAtMs}
-        event={dialogState?.mode === 'edit' ? dialogState.event : undefined}
-        isSaving={createMutation.isPending || updateMutation.isPending}
-        isDeleting={deleteMutation.isPending}
-        onClose={() => setDialogState(null)}
-        onSave={async (payload) => {
-          if (!dialogState) return;
-          if (dialogState.mode === 'create') {
-            await createMutation.mutateAsync({
-              title: payload.title,
-              category: payload.category,
-              startAtMs: dialogState.startAtMs,
-              durationMinutes: payload.durationMinutes,
-            });
-            return;
-          }
-
-          await updateMutation.mutateAsync({
-            eventId: dialogState.event.id,
-            input: {
-              title: payload.title,
-              category: payload.category,
-              durationMinutes: payload.durationMinutes,
-            },
-          });
-        }}
-        onDelete={
-          dialogState?.mode === 'edit' && dialogState.event
-            ? async () => {
-                await deleteMutation.mutateAsync(dialogState.event.id);
-              }
-            : undefined
-        }
+    <div style={{
+      display: 'flex',
+      height: '100vh',
+      background: '#0f0f0f',
+      overflow: 'hidden',
+      fontFamily: 'var(--font-sans, Inter, sans-serif)',
+    }}>
+      <Sidebar
+        events={events}
+        weekStart={weekStart}
+        onPrevWeek={() => setWeekStart(prev => addDays(prev, -7))}
+        onNextWeek={() => setWeekStart(prev => addDays(prev, 7))}
+        onToday={() => setWeekStart(getWeekStart())}
       />
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {/* Top bar */}
+        <div style={{
+          padding: '12px 20px',
+          borderBottom: '1px solid #1e1e1e',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          flexShrink: 0,
+          background: '#0f0f0f',
+        }}>
+          <button
+            type="button"
+            onClick={() => setDialog({ mode: 'create', startAtMs: getDefaultStartAtMs() })}
+            style={{
+              background: '#ff6eb5',
+              color: '#0f0f0f',
+              border: 'none',
+              borderRadius: 8,
+              padding: '7px 16px',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            + Nueva actividad
+          </button>
+        </div>
+
+        {/* Calendar scroll area */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <CalendarTimeline
+            events={events}
+            weekStart={weekStart}
+            onSlotClick={(startAtMs) => setDialog({ mode: 'create', startAtMs })}
+            onEventClick={(event) => setDialog({ mode: 'edit', event })}
+          />
+        </div>
+      </div>
+
+      {dialog !== null && (
+        <EventModal
+          mode={dialog.mode}
+          weekStart={weekStart}
+          initialStartAtMs={dialog.mode === 'create' ? dialog.startAtMs : dialog.event.startAtMs}
+          event={dialog.mode === 'edit' ? dialog.event : undefined}
+          onClose={() => setDialog(null)}
+          onSave={handleSave}
+          onDelete={dialog.mode === 'edit' ? handleDelete : undefined}
+        />
+      )}
     </div>
   );
 };
-

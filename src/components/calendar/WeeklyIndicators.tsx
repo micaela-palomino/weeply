@@ -1,116 +1,167 @@
 'use client';
 
 import * as React from 'react';
-import { addDays, format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import type { WeeklyBalance } from '@/types/schedule';
-import { ACTIVITY_CATEGORIES, CATEGORY_COLOR_MAP } from '@/constants/schedule';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { ACTIVITY_CATEGORIES, TARGET_CATEGORY_SHARE } from '@/constants/schedule';
+import type { ActivityCategoryKey } from '@/types/schedule';
 
 export type WeeklyIndicatorsProps = {
   balance: WeeklyBalance;
 };
 
-const scoreColor = (label: WeeklyBalance['label']) => {
+const scoreLabel = (label: WeeklyBalance['label']) => {
   switch (label) {
-    case 'low':
-      return '#ef4444'; // red-500
-    case 'balanced':
-      return '#f59e0b'; // amber-500
-    case 'high':
-      return '#22c55e'; // green-500
+    case 'low': return 'Carga baja';
+    case 'balanced': return 'Balanceado';
+    case 'high': return 'Saludable';
   }
 };
 
-export const WeeklyIndicators = ({ balance }: WeeklyIndicatorsProps) => {
-  const weekStart = React.useMemo(() => new Date(balance.weekStartAtMs), [balance.weekStartAtMs]);
-  const color = scoreColor(balance.label);
+const scoreColor = (label: WeeklyBalance['label']) => {
+  switch (label) {
+    case 'low': return '#ef4444';
+    case 'balanced': return '#f59e0b';
+    case 'high': return '#4ade80';
+  }
+};
 
+const CARD: React.CSSProperties = {
+  background: '#151515',
+  border: '1px solid #1e1e1e',
+  borderRadius: 12,
+  padding: '1.25rem',
+};
+
+const SECTION_LABEL: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+  color: '#555',
+  marginBottom: 16,
+};
+
+export const WeeklyIndicators = ({ balance }: WeeklyIndicatorsProps) => {
   const totalMinutesWeek = balance.daily.reduce((acc, d) => acc + d.totalMinutes, 0);
 
+  const weeklyByCategory = ACTIVITY_CATEGORIES.map((c) => ({
+    ...c,
+    minutes: balance.daily.reduce(
+      (acc, d) => acc + (d.minutesByCategory[c.key as ActivityCategoryKey] ?? 0),
+      0,
+    ),
+  }));
+
+  const color = scoreColor(balance.label);
+  const label = scoreLabel(balance.label);
+
   return (
-    <div className="mt-3 grid gap-3 md:grid-cols-2">
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Balance semanal</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <Badge
-              className="border-none"
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      {/* Score card */}
+      <div style={CARD}>
+        <div style={SECTION_LABEL}>Balance semanal</div>
+
+        <div className="flex items-end gap-3 mb-4">
+          <span
+            style={{
+              fontSize: 56,
+              fontWeight: 700,
+              letterSpacing: -3,
+              lineHeight: 1,
+              color: '#f5f5f5',
+            }}
+          >
+            {balance.score}
+          </span>
+          <div className="mb-1.5">
+            <span
               style={{
-                backgroundColor: color,
-                color: 'white',
+                display: 'inline-block',
+                fontSize: 11,
+                fontWeight: 600,
+                padding: '3px 10px',
+                borderRadius: 99,
+                background: `${color}20`,
+                color,
+                border: `1px solid ${color}40`,
+                letterSpacing: '0.02em',
               }}
             >
-              {balance.label === 'low' ? 'Carga baja' : balance.label === 'balanced' ? 'Balance' : 'Carga saludable'}
-            </Badge>
-            <div className="text-right">
-              <div className="text-sm text-muted-foreground">Score</div>
-              <div className="text-2xl font-semibold">{balance.score}</div>
-            </div>
+              {label}
+            </span>
           </div>
+        </div>
 
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${balance.score}%`,
-                backgroundColor: color,
-              }}
-            />
-          </div>
+        <div style={{ height: 5, background: '#1e1e1e', borderRadius: 99, overflow: 'hidden' }}>
+          <div
+            style={{
+              width: `${balance.score}%`,
+              height: '100%',
+              borderRadius: 99,
+              background: 'linear-gradient(90deg, #c94fa8, #ff6eb5)',
+              transition: 'width 0.4s ease',
+            }}
+          />
+        </div>
 
-          <div className="text-sm text-muted-foreground">
-            Minutos planificados esta semana: <span className="font-semibold text-foreground">{totalMinutesWeek}</span>
-          </div>
-        </CardContent>
-      </Card>
+        <p style={{ marginTop: 10, fontSize: 12, color: '#555' }}>
+          {totalMinutesWeek} min planificados esta semana
+        </p>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Totales por día</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {balance.daily.map((day) => {
-            const dayDate = addDays(weekStart, day.dayIndex);
+      {/* Categories card */}
+      <div style={CARD}>
+        <div style={SECTION_LABEL}>Por categoría</div>
+
+        <div className="space-y-3">
+          {weeklyByCategory.map((c) => {
+            const pct =
+              totalMinutesWeek > 0 ? Math.round((c.minutes / totalMinutesWeek) * 100) : 0;
+            const targetPct = Math.round(TARGET_CATEGORY_SHARE[c.key as ActivityCategoryKey] * 100);
+
             return (
-              <div key={day.dayIndex} className="rounded-lg border border-border/50 p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold">
-                    {format(dayDate, 'EEE d', { locale: es })}
+              <div key={c.key}>
+                <div
+                  className="flex items-center justify-between"
+                  style={{ marginBottom: 5 }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 600, color: c.color }}>
+                    {c.label}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontSize: 11, color: '#555' }}>
+                      {c.minutes} min
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: '#333',
+                        background: '#1e1e1e',
+                        padding: '1px 6px',
+                        borderRadius: 99,
+                      }}
+                    >
+                      {pct}% / {targetPct}%
+                    </span>
                   </div>
-                  <div className="text-xs text-muted-foreground">{day.totalMinutes} min</div>
                 </div>
 
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {ACTIVITY_CATEGORIES.map((c) => {
-                    const minutes = day.minutesByCategory[c.key];
-                    const cColor = CATEGORY_COLOR_MAP[c.key];
-
-                    return (
-                      <div
-                        key={c.key}
-                        className="rounded-full px-2 py-1 text-xs font-medium"
-                        style={{
-                          backgroundColor: `${cColor}22`,
-                          color: cColor,
-                          border: `1px solid ${cColor}55`,
-                        }}
-                        title={`${c.key}: ${minutes} min`}
-                      >
-                        {c.key === 'work' ? 'Trabajo' : c.key === 'exercise' ? 'Ejercicio' : 'Ocio'}: {minutes}
-                      </div>
-                    );
-                  })}
+                <div style={{ height: 4, background: '#1e1e1e', borderRadius: 99, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${pct}%`,
+                      height: '100%',
+                      borderRadius: 99,
+                      background: c.color,
+                      transition: 'width 0.4s ease',
+                    }}
+                  />
                 </div>
               </div>
             );
           })}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 };
-

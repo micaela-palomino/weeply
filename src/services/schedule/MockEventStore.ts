@@ -9,7 +9,7 @@ import {
   WEEK_STARTS_ON,
 } from '@/constants/schedule';
 
-const STORAGE_KEY = 'weeply:scheduleEvents:v1';
+const STORAGE_KEY = 'weeply:scheduleEvents:v3';
 
 const toSafeNumber = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -36,7 +36,6 @@ const ScheduleEventLike = (raw: unknown): raw is ScheduleEvent => {
   if (!categoryKeys.has(category as ScheduleEvent['category'])) return false;
 
   if (durationMinutes <= 0) return false;
-  if (durationMinutes % TIME_SLOT_MINUTES !== 0) return false;
   return true;
 };
 
@@ -57,19 +56,28 @@ const buildSeedEvents = (): ScheduleEvent[] => {
   const now = new Date();
   const weekStart = startOfWeek(now, { weekStartsOn: WEEK_STARTS_ON });
 
-  const mk = (dayOffset: number, hour: number, minute: number, durationMinutes: number, title: string, category: ScheduleEvent['category']): ScheduleEvent => {
+  const mk = (
+    dayOffset: number,
+    hour: number,
+    minute: number,
+    durationMinutes: number,
+    title: string,
+    category: ScheduleEvent['category'],
+  ): ScheduleEvent => {
     const d = addDays(weekStart, dayOffset);
     const withHour = setHours(d, hour);
     const withMinute = addMinutes(withHour, minute);
     const startAt = alignToSlot(withMinute);
 
-    // Ensure seed stays within display window; if not, just clamp to the window.
     const localStartMinutes = startAt.getHours() * 60 + startAt.getMinutes();
     const minStartMinutes = DISPLAY_START_HOUR * 60;
     const maxEndMinutes = DISPLAY_END_HOUR * 60;
     const duration = Math.max(TIME_SLOT_MINUTES, durationMinutes);
     const durationAligned = Math.floor(duration / TIME_SLOT_MINUTES) * TIME_SLOT_MINUTES;
-    const clampedStartMinutes = Math.max(minStartMinutes, Math.min(localStartMinutes, maxEndMinutes - durationAligned));
+    const clampedStartMinutes = Math.max(
+      minStartMinutes,
+      Math.min(localStartMinutes, maxEndMinutes - durationAligned),
+    );
 
     const startAtClamped = new Date(startAt);
     startAtClamped.setHours(Math.floor(clampedStartMinutes / 60), clampedStartMinutes % 60, 0, 0);
@@ -86,7 +94,7 @@ const buildSeedEvents = (): ScheduleEvent[] => {
   return [
     mk(0, 9, 0, 120, 'Reuniones y foco', 'work'),
     mk(2, 18, 0, 60, 'Entrenamiento', 'exercise'),
-    mk(5, 19, 0, 60, 'Tiempo personal', 'leisure'),
+    mk(4, 19, 0, 60, 'Tiempo personal', 'leisure'),
     mk(6, 10, 30, 90, 'Ocio liviano', 'leisure'),
   ];
 };
@@ -116,4 +124,3 @@ export class MockEventStore implements EventStore {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
   }
 }
-

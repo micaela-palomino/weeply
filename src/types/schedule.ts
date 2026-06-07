@@ -1,48 +1,55 @@
-export type ActivityCategoryKey = 'work' | 'exercise' | 'leisure';
+export type ActivityCategoryKey = 'work' | 'exercise' | 'leisure' | 'university';
+
+export type RecurrenceType = 'once' | 'daily' | 'weekly' | 'custom';
+export type WeekDayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+
+export interface RecurrenceRule {
+  type: RecurrenceType;
+  days?: WeekDayKey[];   // 'custom': specific days of week
+  interval?: number;      // 'weekly': every N weeks (default 1)
+}
 
 export interface ScheduleEvent {
   id: string;
   title: string;
   category: ActivityCategoryKey;
-  /**
-   * Start time as an absolute timestamp (ms since epoch).
-   * We keep it epoch-based to simplify week navigation and storage.
-   */
   startAtMs: number;
   durationMinutes: number;
+  notes?: string;
+  isImportant?: boolean;
+  isDone?: boolean;
+  recurrence?: RecurrenceRule;
+  completedDates?: string[];  // YYYY-MM-DD — which recurring instances are done
+  recurrenceId?: string;      // virtual instances only: ID of the base event
 }
 
 export interface CreateScheduleEventInput {
   title: string;
   category: ActivityCategoryKey;
-  /** Start time as epoch ms. */
   startAtMs: number;
   durationMinutes: number;
+  isImportant?: boolean;
+  recurrence?: RecurrenceRule;
 }
 
 export interface UpdateScheduleEventInput {
   title?: string;
   category?: ActivityCategoryKey;
+  startAtMs?: number;
   durationMinutes?: number;
+  isImportant?: boolean;
+  isDone?: boolean;
 }
 
 export interface DailyTotals {
-  dayIndex: number; // 0..6 within the displayed week
+  dayIndex: number;
   minutesByCategory: Record<ActivityCategoryKey, number>;
   totalMinutes: number;
 }
 
 export interface WeeklyBalance {
-  weekStartAtMs: number; // start of week in epoch ms
+  weekStartAtMs: number;
   daily: DailyTotals[];
-  /**
-   * Simple score derived from how balanced the distribution of category minutes is.
-   * Range: 0..100
-   */
   score: number;
-  /**
-   * A coarse label to show feedback to the user.
-   */
   label: 'low' | 'balanced' | 'high';
 }
-
