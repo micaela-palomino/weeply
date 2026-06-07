@@ -51,10 +51,27 @@ const getDefaultStartAtMs = (): number => {
   return d.getTime();
 };
 
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = React.useState(false); // false on SSR — updated after mount
+  React.useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+  return isMobile;
+};
+
 export const WeekCalendar = () => {
+  const isMobile = useIsMobile();
   const [weekStart, setWeekStart] = React.useState(getWeekStart);
   const [events, setEvents] = React.useState<ScheduleEvent[]>(() => makeSampleEvents(getWeekStart()));
   const [dialog, setDialog] = React.useState<DialogState | null>(null);
+  const [sidebarOpen, setSidebarOpen] = React.useState(true); // open by default (matches SSR)
+
+  React.useEffect(() => {
+    setSidebarOpen(!isMobile);
+  }, [isMobile]);
 
   const handleSave = (payloads: SavePayload[]) => {
     if (!dialog) return;
@@ -79,33 +96,96 @@ export const WeekCalendar = () => {
     setDialog(null);
   };
 
+  const handleMarkDone = (id: string, done: boolean | undefined) => {
+    setEvents(prev => prev.map(e => e.id === id ? { ...e, isDone: done } : e));
+  };
+
+  const handleReschedule = (event: ScheduleEvent, newStartAtMs: number) => {
+    setEvents(prev => [...prev, { ...event, id: makeId(), startAtMs: newStartAtMs, isDone: undefined }]);
+  };
+
   return (
     <div style={{
       display: 'flex',
-      height: '100vh',
+      height: '100dvh',
       background: '#0f0f0f',
       overflow: 'hidden',
       fontFamily: 'var(--font-sans, Inter, sans-serif)',
+      position: 'relative',
     }}>
-      <Sidebar
-        events={events}
-        weekStart={weekStart}
-        onPrevWeek={() => setWeekStart(prev => addDays(prev, -7))}
-        onNextWeek={() => setWeekStart(prev => addDays(prev, 7))}
-        onToday={() => setWeekStart(getWeekStart())}
-      />
+      {/* Mobile overlay backdrop */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 10,
+          }}
+        />
+      )}
 
+      {/* Sidebar */}
+      <div style={{
+        position: isMobile ? 'fixed' : 'relative',
+        top: 0,
+        left: 0,
+        height: '100%',
+        zIndex: isMobile ? 20 : 'auto',
+        transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.25s ease',
+        flexShrink: 0,
+        width: 280,
+        display: isMobile ? 'block' : (sidebarOpen ? 'block' : 'none'),
+      }}>
+        <Sidebar
+          events={events}
+          weekStart={weekStart}
+          onPrevWeek={() => setWeekStart(prev => addDays(prev, -7))}
+          onNextWeek={() => setWeekStart(prev => addDays(prev, 7))}
+          onToday={() => setWeekStart(getWeekStart())}
+          onClose={isMobile ? () => setSidebarOpen(false) : undefined}
+          onMarkDone={handleMarkDone}
+          onReschedule={handleReschedule}
+        />
+      </div>
+
+      {/* Main content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         {/* Top bar */}
         <div style={{
-          padding: '12px 20px',
+          padding: '10px 16px',
           borderBottom: '1px solid #1e1e1e',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
           flexShrink: 0,
           background: '#0f0f0f',
+          gap: 10,
         }}>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(v => !v)}
+            aria-label="Menú"
+            style={{
+              background: 'none',
+              border: '1px solid #2a2a2a',
+              borderRadius: 8,
+              padding: '6px 10px',
+              cursor: 'pointer',
+              color: '#888',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ display: 'block', width: 16, height: 1.5, background: '#888', borderRadius: 2 }} />
+            <span style={{ display: 'block', width: 16, height: 1.5, background: '#888', borderRadius: 2 }} />
+            <span style={{ display: 'block', width: 16, height: 1.5, background: '#888', borderRadius: 2 }} />
+          </button>
+
           <button
             type="button"
             onClick={() => setDialog({ mode: 'create', startAtMs: getDefaultStartAtMs() })}
@@ -119,6 +199,7 @@ export const WeekCalendar = () => {
               fontWeight: 700,
               cursor: 'pointer',
               fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
             }}
           >
             + Nueva actividad
