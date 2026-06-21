@@ -2,8 +2,12 @@
 
 import * as React from 'react';
 import { startOfWeek, addDays } from 'date-fns';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import type { ScheduleEvent } from '@/types/schedule';
 import { WEEK_STARTS_ON } from '@/constants/schedule';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/providers/AuthProvider';
+import { LoginScreen } from '@/components/auth/LoginScreen';
 import { Sidebar } from './Sidebar';
 import { CalendarTimeline } from './CalendarTimeline';
 import { EventModal, type SavePayload } from './EventModal';
@@ -16,21 +20,6 @@ const getWeekStart = () => startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_O
 
 let _nextId = 1;
 const makeId = () => `ev-${_nextId++}`;
-
-const makeSampleEvents = (ws: Date): ScheduleEvent[] => {
-  const at = (dayOffset: number, hours: number, minutes = 0): number => {
-    const d = new Date(ws);
-    d.setDate(d.getDate() + dayOffset);
-    d.setHours(hours, minutes, 0, 0);
-    return d.getTime();
-  };
-  return [
-    { id: makeId(), title: 'Deep work', category: 'work', startAtMs: at(0, 9), durationMinutes: 120 },
-    { id: makeId(), title: 'Análisis', category: 'university', startAtMs: at(1, 16), durationMinutes: 120 },
-    { id: makeId(), title: 'Gym', category: 'exercise', startAtMs: at(2, 18), durationMinutes: 60 },
-    { id: makeId(), title: 'Lectura', category: 'leisure', startAtMs: at(4, 20), durationMinutes: 60 },
-  ];
-};
 
 const getDefaultStartAtMs = (): number => {
   const now = new Date();
@@ -52,7 +41,7 @@ const getDefaultStartAtMs = (): number => {
 };
 
 const useIsMobile = () => {
-  const [isMobile, setIsMobile] = React.useState(false); // false on SSR — updated after mount
+  const [isMobile, setIsMobile] = React.useState(false);
   React.useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -62,16 +51,48 @@ const useIsMobile = () => {
   return isMobile;
 };
 
+const saveEventsToFirestore = async (uid: string, events: ScheduleEvent[]) => {
+  await setDoc(doc(db, 'users', uid), { events });
+};
+
 export const WeekCalendar = () => {
+  const { user, loading: authLoading, signOut } = useAuth();
   const isMobile = useIsMobile();
   const [weekStart, setWeekStart] = React.useState(getWeekStart);
-  const [events, setEvents] = React.useState<ScheduleEvent[]>(() => makeSampleEvents(getWeekStart()));
+  const [events, setEvents] = React.useState<ScheduleEvent[]>([]);
   const [dialog, setDialog] = React.useState<DialogState | null>(null);
-  const [sidebarOpen, setSidebarOpen] = React.useState(true); // open by default (matches SSR)
+  const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  const [firestoreLoading, setFirestoreLoading] = React.useState(true);
+  const loadedRef = React.useRef(false);
 
   React.useEffect(() => {
     setSidebarOpen(!isMobile);
   }, [isMobile]);
+
+  // Load events from Firestore when user logs in
+  React.useEffect(() => {
+    if (!user) {
+      loadedRef.current = false;
+      setEvents([]);
+      setFirestoreLoading(true);
+      return;
+    }
+    setFirestoreLoading(true);
+    getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      const data = snap.data();
+      if (data?.events && Array.isArray(data.events)) {
+        setEvents(data.events as ScheduleEvent[]);
+      }
+      loadedRef.current = true;
+      setFirestoreLoading(false);
+    });
+  }, [user]);
+
+  // Save events to Firestore on every change (after initial load)
+  React.useEffect(() => {
+    if (!user || !loadedRef.current) return;
+    saveEventsToFirestore(user.uid, events);
+  }, [events, user]);
 
   const handleSave = (payloads: SavePayload[]) => {
     if (!dialog) return;
@@ -103,6 +124,26 @@ export const WeekCalendar = () => {
   const handleReschedule = (event: ScheduleEvent, newStartAtMs: number) => {
     setEvents(prev => [...prev, { ...event, id: makeId(), startAtMs: newStartAtMs, isDone: undefined }]);
   };
+
+  if (authLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', background: '#0f0f0f' }}>
+        <span style={{ color: '#555', fontSize: 14 }}>Cargando...</span>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginScreen />;
+  }
+
+  if (firestoreLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', background: '#0f0f0f' }}>
+        <span style={{ color: '#555', fontSize: 14 }}>Cargando tu agenda...</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -186,24 +227,44 @@ export const WeekCalendar = () => {
             <span style={{ display: 'block', width: 16, height: 1.5, background: '#888', borderRadius: 2 }} />
           </button>
 
-          <button
-            type="button"
-            onClick={() => setDialog({ mode: 'create', startAtMs: getDefaultStartAtMs() })}
-            style={{
-              background: '#ff6eb5',
-              color: '#0f0f0f',
-              border: 'none',
-              borderRadius: 8,
-              padding: '7px 16px',
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            + Nueva actividad
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setDialog({ mode: 'create', startAtMs: getDefaultStartAtMs() })}
+              style={{
+                background: '#ff6eb5',
+                color: '#0f0f0f',
+                border: 'none',
+                borderRadius: 8,
+                padding: '7px 16px',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + Nueva actividad
+            </button>
+            <button
+              type="button"
+              onClick={signOut}
+              title={`Cerrar sesión (${user.email})`}
+              style={{
+                background: 'none',
+                border: '1px solid #2a2a2a',
+                borderRadius: 8,
+                padding: '6px 10px',
+                cursor: 'pointer',
+                color: '#555',
+                fontSize: 12,
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Salir
+            </button>
+          </div>
         </div>
 
         {/* Calendar scroll area */}

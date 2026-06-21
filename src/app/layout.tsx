@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import '@/app/globals.css';
 import { ReactQueryProvider } from '@/providers/ReactQueryProvider';
+import { AuthProvider } from '@/providers/AuthProvider';
 import { Inter } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { PwaSetup } from '@/components/pwa/PwaSetup';
@@ -23,7 +24,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="theme-color" content="#ff6eb5" />
       </head>
       <body>
-        <ReactQueryProvider>{children}</ReactQueryProvider>
+        <AuthProvider>
+          <ReactQueryProvider>{children}</ReactQueryProvider>
+        </AuthProvider>
         <PwaSetup />
       </body>
     </html>
