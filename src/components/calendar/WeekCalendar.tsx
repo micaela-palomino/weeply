@@ -52,7 +52,8 @@ const useIsMobile = () => {
 };
 
 const saveEventsToFirestore = async (uid: string, events: ScheduleEvent[]) => {
-  await setDoc(doc(db, 'users', uid), { events });
+  const clean = JSON.parse(JSON.stringify(events));
+  await setDoc(doc(db, 'users', uid), { events: clean });
 };
 
 export const WeekCalendar = () => {
