@@ -19,8 +19,22 @@ export interface ScheduleEvent {
   isImportant?: boolean;
   isDone?: boolean;
   recurrence?: RecurrenceRule;
-  completedDates?: string[];  // YYYY-MM-DD — which recurring instances are done
-  recurrenceId?: string;      // virtual instances only: ID of the base event
+  recurrenceEndDate?: string;  // YYYY-MM-DD — inclusive end date for recurrence
+  skippedDates?: string[];     // YYYY-MM-DD — dates to skip in recurrence
+  completedDates?: string[];   // YYYY-MM-DD — which recurring instances are done
+  recurrenceId?: string;       // virtual instances only: ID of the base event
+}
+
+export interface Goal {
+  id: string;
+  name: string;
+  items: string[];
+}
+
+export interface GoalCompletion {
+  goalId: string;
+  date: string;              // YYYY-MM-DD
+  completedItems: string[];  // subset of Goal.items that are checked
 }
 
 export interface CreateScheduleEventInput {

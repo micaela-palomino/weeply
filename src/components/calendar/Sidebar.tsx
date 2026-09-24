@@ -4,9 +4,10 @@ import * as React from 'react';
 import { addDays, format, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ChevronRight } from 'lucide-react';
-import type { ActivityCategoryKey, ScheduleEvent } from '@/types/schedule';
+import type { ActivityCategoryKey, Goal, GoalCompletion, ScheduleEvent } from '@/types/schedule';
 import { ACTIVITY_CATEGORIES, WEEKLY_TARGETS } from '@/constants/schedule';
 import { findRescheduleSlots } from '@/lib/suggestions';
+import { GoalsSection } from './GoalsSection';
 
 type Props = {
   events: ScheduleEvent[];
@@ -17,6 +18,11 @@ type Props = {
   onClose?: () => void;
   onMarkDone: (id: string, done: boolean | undefined) => void;
   onReschedule: (event: ScheduleEvent, newStartAtMs: number) => void;
+  goals: Goal[];
+  goalCompletions: GoalCompletion[];
+  onAddGoal: (goal: Goal) => void;
+  onDeleteGoal: (goalId: string) => void;
+  onToggleGoalItem: (goalId: string, date: string, item: string, checked: boolean) => void;
 };
 
 const EXERCISE_MIN = WEEKLY_TARGETS.exercise.min;
@@ -238,9 +244,10 @@ function EventRow({ event, allEvents, weekEnd, onMarkDone, onReschedule }: Event
   );
 }
 
-export function Sidebar({ events, weekStart, onPrevWeek, onNextWeek, onToday, onClose, onMarkDone, onReschedule }: Props) {
+export function Sidebar({ events, weekStart, onPrevWeek, onNextWeek, onToday, onClose, onMarkDone, onReschedule, goals, goalCompletions, onAddGoal, onDeleteGoal, onToggleGoalItem }: Props) {
   const [metricsOpen, setMetricsOpen] = React.useState(false);
   const [calOpen, setCalOpen] = React.useState(true);
+  const [trackingOpen, setTrackingOpen] = React.useState(true);
   const [goalsOpen, setGoalsOpen] = React.useState(true);
 
   const ws = weekStart.getTime();
@@ -436,8 +443,20 @@ export function Sidebar({ events, weekStart, onPrevWeek, onNextWeek, onToday, on
           </div>
         </Section>
 
-        {/* Objetivos */}
+        {/* Objetivos (habit tracker) */}
         <Section title="Objetivos" open={goalsOpen} onToggle={() => setGoalsOpen(v => !v)}>
+          <GoalsSection
+            goals={goals}
+            goalCompletions={goalCompletions}
+            weekStart={weekStart}
+            onAddGoal={onAddGoal}
+            onDeleteGoal={onDeleteGoal}
+            onToggleItem={onToggleGoalItem}
+          />
+        </Section>
+
+        {/* Seguimiento (event completion tracking) */}
+        <Section title="Seguimiento" open={trackingOpen} onToggle={() => setTrackingOpen(v => !v)}>
           {weekEvents.length === 0 ? (
             <p style={{ fontSize: 11, color: '#555', padding: '8px 16px 16px', margin: 0 }}>
               Sin actividades esta semana.

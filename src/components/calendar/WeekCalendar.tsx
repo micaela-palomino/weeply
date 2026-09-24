@@ -3,18 +3,20 @@
 import * as React from 'react';
 import { startOfWeek, addDays } from 'date-fns';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import type { ScheduleEvent } from '@/types/schedule';
+import type { Goal, GoalCompletion, ScheduleEvent } from '@/types/schedule';
 import { WEEK_STARTS_ON } from '@/constants/schedule';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/providers/AuthProvider';
+import { expandWeekEvents, formatDateKey } from '@/lib/recurrence';
 import { LoginScreen } from '@/components/auth/LoginScreen';
 import { Sidebar } from './Sidebar';
 import { CalendarTimeline } from './CalendarTimeline';
 import { EventModal, type SavePayload } from './EventModal';
+import { RecurringDeleteModal, type RecurringDeleteMode } from './RecurringDeleteModal';
 
 type DialogState =
   | { mode: 'create'; startAtMs: number }
-  | { mode: 'edit'; event: ScheduleEvent };
+  | { mode: 'edit'; event: ScheduleEvent; virtualInstance?: ScheduleEvent };
 
 const getWeekStart = () => startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
 
@@ -51,9 +53,14 @@ const useIsMobile = () => {
   return isMobile;
 };
 
-const saveEventsToFirestore = async (uid: string, events: ScheduleEvent[]) => {
-  const clean = JSON.parse(JSON.stringify(events));
-  await setDoc(doc(db, 'users', uid), { events: clean });
+const saveDataToFirestore = async (
+  uid: string,
+  events: ScheduleEvent[],
+  goals: Goal[],
+  goalCompletions: GoalCompletion[],
+) => {
+  const clean = JSON.parse(JSON.stringify({ events, goals, goalCompletions }));
+  await setDoc(doc(db, 'users', uid), clean);
 };
 
 export const WeekCalendar = () => {
@@ -61,20 +68,25 @@ export const WeekCalendar = () => {
   const isMobile = useIsMobile();
   const [weekStart, setWeekStart] = React.useState(getWeekStart);
   const [events, setEvents] = React.useState<ScheduleEvent[]>([]);
+  const [goals, setGoals] = React.useState<Goal[]>([]);
+  const [goalCompletions, setGoalCompletions] = React.useState<GoalCompletion[]>([]);
   const [dialog, setDialog] = React.useState<DialogState | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [firestoreLoading, setFirestoreLoading] = React.useState(true);
+  const [recurringDeletePending, setRecurringDeletePending] = React.useState(false);
   const loadedRef = React.useRef(false);
 
   React.useEffect(() => {
     setSidebarOpen(!isMobile);
   }, [isMobile]);
 
-  // Load events from Firestore when user logs in
+  // Load from Firestore when user logs in
   React.useEffect(() => {
     if (!user) {
       loadedRef.current = false;
       setEvents([]);
+      setGoals([]);
+      setGoalCompletions([]);
       setFirestoreLoading(true);
       return;
     }
@@ -84,16 +96,28 @@ export const WeekCalendar = () => {
       if (data?.events && Array.isArray(data.events)) {
         setEvents(data.events as ScheduleEvent[]);
       }
+      if (data?.goals && Array.isArray(data.goals)) {
+        setGoals(data.goals as Goal[]);
+      }
+      if (data?.goalCompletions && Array.isArray(data.goalCompletions)) {
+        setGoalCompletions(data.goalCompletions as GoalCompletion[]);
+      }
       loadedRef.current = true;
       setFirestoreLoading(false);
     });
   }, [user]);
 
-  // Save events to Firestore on every change (after initial load)
+  // Save to Firestore on every change (after initial load)
   React.useEffect(() => {
     if (!user || !loadedRef.current) return;
-    saveEventsToFirestore(user.uid, events);
-  }, [events, user]);
+    saveDataToFirestore(user.uid, events, goals, goalCompletions);
+  }, [events, goals, goalCompletions, user]);
+
+  // Expanded events for the current week (includes virtual recurring instances)
+  const expandedEvents = React.useMemo(
+    () => expandWeekEvents(events, weekStart),
+    [events, weekStart],
+  );
 
   const handleSave = (payloads: SavePayload[]) => {
     if (!dialog) return;
@@ -103,27 +127,145 @@ export const WeekCalendar = () => {
     } else {
       const payload = payloads[0];
       if (payload) {
+        const targetId = dialog.event.id;
         setEvents(prev =>
-          prev.map(e => e.id === dialog.event.id ? { ...e, ...payload } : e),
+          prev.map(e => e.id === targetId ? { ...e, ...payload } : e),
         );
       }
     }
     setDialog(null);
   };
 
-  const handleDelete = () => {
+  const handleDeleteRequest = () => {
     if (dialog?.mode !== 'edit') return;
-    const id = dialog.event.id;
-    setEvents(prev => prev.filter(e => e.id !== id));
+    if (dialog.virtualInstance) {
+      // Recurring instance: show options modal
+      setRecurringDeletePending(true);
+    } else if (dialog.event.recurrence) {
+      // Editing parent directly: show options modal
+      setRecurringDeletePending(true);
+    } else {
+      // Normal event: delete immediately
+      setEvents(prev => prev.filter(e => e.id !== dialog.event.id));
+      setDialog(null);
+    }
+  };
+
+  const handleRecurringDelete = (mode: RecurringDeleteMode) => {
+    if (dialog?.mode !== 'edit') return;
+    const virtualInstance = dialog.virtualInstance;
+    const parentId = virtualInstance?.recurrenceId ?? dialog.event.id;
+    const instanceDate = virtualInstance
+      ? formatDateKey(new Date(virtualInstance.startAtMs))
+      : formatDateKey(new Date(dialog.event.startAtMs));
+
+    setRecurringDeletePending(false);
+
+    if (mode === 'all') {
+      setEvents(prev => prev.filter(e => e.id !== parentId));
+    } else if (mode === 'single') {
+      setEvents(prev =>
+        prev.map(e =>
+          e.id === parentId
+            ? { ...e, skippedDates: [...(e.skippedDates ?? []), instanceDate] }
+            : e,
+        ),
+      );
+    } else if (mode === 'thisAndFuture') {
+      // Set end date to the day before this instance
+      const dayBefore = new Date(virtualInstance?.startAtMs ?? dialog.event.startAtMs);
+      dayBefore.setDate(dayBefore.getDate() - 1);
+      const endDate = formatDateKey(dayBefore);
+      setEvents(prev =>
+        prev.map(e =>
+          e.id === parentId ? { ...e, recurrenceEndDate: endDate } : e,
+        ),
+      );
+    }
+
     setDialog(null);
   };
 
   const handleMarkDone = (id: string, done: boolean | undefined) => {
-    setEvents(prev => prev.map(e => e.id === id ? { ...e, isDone: done } : e));
+    // id may be a virtual instance id (parentId__dateKey) or a real event id
+    const parts = id.split('__');
+    if (parts.length === 2) {
+      const [parentId, dateKey] = parts as [string, string];
+      if (done === true) {
+        setEvents(prev =>
+          prev.map(e =>
+            e.id === parentId
+              ? { ...e, completedDates: [...new Set([...(e.completedDates ?? []), dateKey])] }
+              : e,
+          ),
+        );
+      } else {
+        setEvents(prev =>
+          prev.map(e =>
+            e.id === parentId
+              ? { ...e, completedDates: (e.completedDates ?? []).filter(d => d !== dateKey) }
+              : e,
+          ),
+        );
+      }
+    } else {
+      setEvents(prev => prev.map(e => e.id === id ? { ...e, isDone: done } : e));
+    }
   };
 
   const handleReschedule = (event: ScheduleEvent, newStartAtMs: number) => {
-    setEvents(prev => [...prev, { ...event, id: makeId(), startAtMs: newStartAtMs, isDone: undefined }]);
+    setEvents(prev => [...prev, { ...event, id: makeId(), startAtMs: newStartAtMs, isDone: undefined, recurrenceId: undefined, recurrence: undefined }]);
+  };
+
+  const handleEventClick = (ev: ScheduleEvent) => {
+    if (ev.recurrenceId) {
+      // Virtual instance: edit parent but remember the instance
+      const parent = events.find(e => e.id === ev.recurrenceId);
+      if (parent) {
+        setDialog({ mode: 'edit', event: parent, virtualInstance: ev });
+        return;
+      }
+    }
+    setDialog({ mode: 'edit', event: ev });
+  };
+
+  // Goals handlers
+  const handleAddGoal = (goal: Goal) => {
+    setGoals(prev => [...prev, goal]);
+  };
+
+  const handleDeleteGoal = (goalId: string) => {
+    setGoals(prev => prev.filter(g => g.id !== goalId));
+    setGoalCompletions(prev => prev.filter(gc => gc.goalId !== goalId));
+  };
+
+  const handleToggleGoalItem = (goalId: string, date: string, item: string, checked: boolean) => {
+    setGoalCompletions(prev => {
+      const existing = prev.find(gc => gc.goalId === goalId && gc.date === date);
+      if (checked) {
+        if (existing) {
+          return prev.map(gc =>
+            gc.goalId === goalId && gc.date === date
+              ? { ...gc, completedItems: [...new Set([...gc.completedItems, item])] }
+              : gc,
+          );
+        }
+        return [...prev, { goalId, date, completedItems: [item] }];
+      } else {
+        if (existing) {
+          const newItems = existing.completedItems.filter(i => i !== item);
+          if (newItems.length === 0) {
+            return prev.filter(gc => !(gc.goalId === goalId && gc.date === date));
+          }
+          return prev.map(gc =>
+            gc.goalId === goalId && gc.date === date
+              ? { ...gc, completedItems: newItems }
+              : gc,
+          );
+        }
+        return prev;
+      }
+    });
   };
 
   if (authLoading) {
@@ -145,6 +287,9 @@ export const WeekCalendar = () => {
       </div>
     );
   }
+
+  const editEvent = dialog?.mode === 'edit' ? dialog.event : undefined;
+  const editVirtual = dialog?.mode === 'edit' ? dialog.virtualInstance : undefined;
 
   return (
     <div style={{
@@ -182,7 +327,7 @@ export const WeekCalendar = () => {
         display: isMobile ? 'block' : (sidebarOpen ? 'block' : 'none'),
       }}>
         <Sidebar
-          events={events}
+          events={expandedEvents}
           weekStart={weekStart}
           onPrevWeek={() => setWeekStart(prev => addDays(prev, -7))}
           onNextWeek={() => setWeekStart(prev => addDays(prev, 7))}
@@ -190,6 +335,11 @@ export const WeekCalendar = () => {
           onClose={isMobile ? () => setSidebarOpen(false) : undefined}
           onMarkDone={handleMarkDone}
           onReschedule={handleReschedule}
+          goals={goals}
+          goalCompletions={goalCompletions}
+          onAddGoal={handleAddGoal}
+          onDeleteGoal={handleDeleteGoal}
+          onToggleGoalItem={handleToggleGoalItem}
         />
       </div>
 
@@ -271,10 +421,10 @@ export const WeekCalendar = () => {
         {/* Calendar scroll area */}
         <div style={{ flex: 1, overflow: 'auto' }}>
           <CalendarTimeline
-            events={events}
+            events={expandedEvents}
             weekStart={weekStart}
             onSlotClick={(startAtMs) => setDialog({ mode: 'create', startAtMs })}
-            onEventClick={(event) => setDialog({ mode: 'edit', event })}
+            onEventClick={handleEventClick}
           />
         </div>
       </div>
@@ -283,11 +433,18 @@ export const WeekCalendar = () => {
         <EventModal
           mode={dialog.mode}
           weekStart={weekStart}
-          initialStartAtMs={dialog.mode === 'create' ? dialog.startAtMs : dialog.event.startAtMs}
-          event={dialog.mode === 'edit' ? dialog.event : undefined}
+          initialStartAtMs={dialog.mode === 'create' ? dialog.startAtMs : (editVirtual?.startAtMs ?? editEvent!.startAtMs)}
+          event={editEvent}
           onClose={() => setDialog(null)}
           onSave={handleSave}
-          onDelete={dialog.mode === 'edit' ? handleDelete : undefined}
+          onDelete={dialog.mode === 'edit' ? handleDeleteRequest : undefined}
+        />
+      )}
+
+      {recurringDeletePending && (
+        <RecurringDeleteModal
+          onSelect={handleRecurringDelete}
+          onClose={() => setRecurringDeletePending(false)}
         />
       )}
     </div>
